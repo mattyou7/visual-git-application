@@ -16,7 +16,7 @@ import type {
 
 type Theme = "dark" | "light";
 type ViewMode = "list" | "grid";
-type PanelName = "history" | "branches" | "graph" | "conflicts" | null;
+type PanelName = "history" | "branches" | "graph" | "conflicts" | "merge" | null;
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -417,6 +417,8 @@ export default function App() {
   // Overlay panels (History / Branches / Graph / Conflicts) - one at a time.
   const [activePanel, setActivePanel] = useState<PanelName>(null);
   const [branches, setBranches] = useState<GitBranch[]>([]);
+  const [mergeCandidates, setMergeCandidates] = useState<api.GitBranchMergeability[]>([]);
+  const [mergeCandidatesLoading, setMergeCandidatesLoading] = useState(false);
   const [historyCommits, setHistoryCommits] = useState<GitCommit[]>([]);
   const [graphCommits, setGraphCommits] = useState<GitCommit[]>([]);
   const [conflictState, setConflictState] = useState<GitConflictState | null>(null);
@@ -708,6 +710,14 @@ export default function App() {
       if (panel === "history") setHistoryCommits(await api.getHistory(100));
       if (panel === "graph") setGraphCommits(await api.getGraph(200));
       if (panel === "conflicts") setConflictState(await api.getConflicts());
+      if (panel === "merge") {
+        setMergeCandidatesLoading(true);
+        try {
+          setMergeCandidates(await api.getBranchMergeability());
+        } finally {
+          setMergeCandidatesLoading(false);
+        }
+      }
     } catch (error) {
       showError(error);
     }
@@ -737,12 +747,15 @@ export default function App() {
     }
   }, [refreshFiles, showError]);
 
-  const handleMerge = useCallback(async () => {
-    const branch = window.prompt("Merge which branch into the current branch?");
-    if (!branch || !branch.trim()) return;
+  const handleMerge = useCallback(() => {
+    void openPanel("merge");
+  }, [openPanel]);
+
+  const handleMergeBranch = useCallback(async (branch: string) => {
     try {
-      const result = await api.mergeBranch(branch.trim());
+      const result = await api.mergeBranch(branch);
       if (result.succeeded) {
+        setActivePanel(null);
         await refreshAfterGitMutation();
         window.alert(result.message);
       } else {
@@ -986,6 +999,45 @@ export default function App() {
                   {branch.current && <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--accent)" }}>current</span>}
                 </PanelRow>
               ))}
+            </Panel>
+          )}
+
+          {activePanel === "merge" && (
+            <Panel title="Merge into current branch" onClose={() => setActivePanel(null)} width={360}>
+              {mergeCandidatesLoading && <PanelRow>Checking branches…</PanelRow>}
+              {!mergeCandidatesLoading && mergeCandidates.length === 0 && (
+                <PanelRow>No other branches found.</PanelRow>
+              )}
+              {!mergeCandidatesLoading && [...mergeCandidates]
+                .sort((a, b) => (a.current === b.current ? a.name.localeCompare(b.name) : a.current ? -1 : 1))
+                .map(branch => {
+                  const meta: Record<api.MergeStatus, { icon: string; color: string; text: string }> = {
+                    current: { icon: "●", color: "var(--accent)", text: "current branch" },
+                    upToDate: { icon: "✓", color: "var(--text-faint)", text: "up to date" },
+                    clean: { icon: "→", color: "var(--git-added)", text: "can merge" },
+                    conflict: { icon: "✕", color: "var(--git-deleted)", text: "would conflict" },
+                    unknown: { icon: "?", color: "var(--text-faint)", text: "unknown" },
+                  };
+                  const { icon, color, text } = meta[branch.mergeStatus];
+                  const clickable = branch.mergeStatus === "clean";
+                  return (
+                    <PanelRow key={branch.name} onClick={clickable ? () => void handleMergeBranch(branch.name) : undefined}>
+                      <span style={{ color: branch.current ? "var(--accent)" : "var(--text-faint)" }}>{I.gitBranch}</span>
+                      <span style={{
+                        fontFamily: "var(--font-mono)", fontWeight: branch.current ? 600 : 400, flex: 1,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        opacity: clickable || branch.current ? 1 : 0.6,
+                      }}>{branch.name}</span>
+                      <span title={text} style={{
+                        display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color,
+                        fontFamily: "var(--font-mono)", flexShrink: 0, whiteSpace: "nowrap",
+                      }}>
+                        <span style={{ fontSize: 12 }}>{icon}</span>
+                        {text}
+                      </span>
+                    </PanelRow>
+                  );
+                })}
             </Panel>
           )}
 

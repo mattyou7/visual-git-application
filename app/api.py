@@ -682,6 +682,32 @@ def get_branches() -> dict[str, Any]:
         raise _map_error(exc)
 
 
+_MERGE_STATUS_LABELS = {
+    "current": "current",
+    "up_to_date": "upToDate",
+    "clean": "clean",
+    "conflict": "conflict",
+    "unknown": "unknown",
+}
+
+
+@app.get("/api/git/branches/mergeability")
+def get_branch_mergeability() -> dict[str, Any]:
+    repo = _repo_or_error()
+    try:
+        previews = git.merge_previews(repo)
+        return ok([
+            {
+                "name": branch.name,
+                "current": branch.current,
+                "mergeStatus": _MERGE_STATUS_LABELS.get(previews.get(branch.name, "unknown"), "unknown"),
+            }
+            for branch in git.branches(repo)
+        ])
+    except GitRepositoryError as exc:
+        raise _map_error(exc)
+
+
 @app.post("/api/git/branches")
 def create_branch(payload: dict[str, Any]) -> dict[str, Any]:
     repo = _repo_or_error()

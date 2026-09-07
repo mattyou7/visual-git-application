@@ -51,6 +51,14 @@ export interface GitBranch {
   current: boolean;
 }
 
+export type MergeStatus = "current" | "upToDate" | "clean" | "conflict" | "unknown";
+
+export interface GitBranchMergeability {
+  name: string;
+  current: boolean;
+  mergeStatus: MergeStatus;
+}
+
 export interface GitCommit {
   hash: string;
   shortHash: string;
@@ -279,6 +287,10 @@ export function commit(message: string): Promise<GitStatusResponse> {
 
 export function getBranches(): Promise<GitBranch[]> {
   return get<GitBranch[]>("/api/git/branches");
+}
+
+export function getBranchMergeability(): Promise<GitBranchMergeability[]> {
+  return get<GitBranchMergeability[]>("/api/git/branches/mergeability");
 }
 
 export function createBranch(name: string, startPoint?: string | null): Promise<{ branches: GitBranch[]; repository: RepositoryInfo }> {

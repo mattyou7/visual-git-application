@@ -394,6 +394,49 @@ class GitRepositoryServiceTests(unittest.TestCase):
             self.assertEqual(len(merge_commit), 40)
             self.assertFalse(service.conflict_state(repository).in_progress)
 
+    def test_merge_preview_reports_clean_conflict_and_up_to_date_branches(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            tracked = root / "tracked.txt"
+            tracked.write_text("base")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            environment = ["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+            subprocess.run([*environment, "commit", "-qm", "base"], check=True)
+            repository = GitRepositoryService().detect(root)
+            self.assertIsNotNone(repository)
+            service = GitRepositoryService()
+            default_branch = repository.branch
+            self.assertIsNotNone(default_branch)
+
+            # A branch that only adds a new file: should merge cleanly.
+            service.create_branch(repository, "clean-feature")
+            (root / "clean.txt").write_text("clean")
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run([*environment, "commit", "-qm", "clean feature"], check=True)
+            service.switch_branch(repository, default_branch)
+
+            # A branch that edits the same file differently: would conflict.
+            service.create_branch(repository, "conflicting-feature")
+            tracked.write_text("conflicting change")
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run([*environment, "commit", "-qm", "conflicting feature"], check=True)
+            service.switch_branch(repository, default_branch)
+            tracked.write_text("main branch change")
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run([*environment, "commit", "-qm", "main branch change"], check=True)
+
+            # A branch with nothing new relative to the current branch: nothing to merge.
+            service.create_branch(repository, "already-merged")
+            service.switch_branch(repository, default_branch)
+
+            repository = service.detect(root)
+            previews = service.merge_previews(repository)
+            self.assertEqual(previews[default_branch], "current")
+            self.assertEqual(previews["clean-feature"], "clean")
+            self.assertEqual(previews["conflicting-feature"], "conflict")
+            self.assertEqual(previews["already-merged"], "up_to_date")
+
     def test_detects_repository_root_and_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -505,8 +548,9 @@ class LocalOfflineAcceptanceTests(unittest.TestCase):
             self.assertGreaterEqual(len(git.graph_history(repository)), 4)
 
             tracked.write_text("dirty\n")
-            with self.assertRaisesRegex(GitRepositoryError, "before switching"):
-                git.switch_branch(repository, "feature")
+            git.switch_branch(repository, "feature")
+            self.assertEqual(git.detect(root).branch, "feature")
+            self.assertEqual(tracked.read_text(), "dirty\n")
             subprocess.run(["git", "-C", str(root), "checkout", "--", "tracked.txt"], check=True)
 
             git.create_branch(repository, "from-initial", file_history[1].hash)

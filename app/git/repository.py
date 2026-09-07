@@ -245,6 +245,35 @@ class GitRepositoryService:
             raise GitRepositoryError("Enter a new branch name.")
         self._run(repository.root, "branch", "-m", old_name, clean_name, check=True)
 
+    def merge_preview(self, repository: RepositoryInfo, branch: str) -> str:
+        """Check whether `branch` could be merged into the current branch,
+        without touching the working tree, index, or HEAD.
+
+        Returns one of:
+          "current"    - this is the branch that is already checked out
+          "up_to_date" - branch is already fully contained in HEAD; nothing to merge
+          "clean"      - branch can be merged without conflicts
+          "conflict"   - merging would produce conflicts
+          "unknown"    - could not be determined (e.g. unrelated histories)
+        """
+        current = repository.branch
+        if current is not None and branch == current:
+            return "current"
+        base_result = self._run(repository.root, "merge-base", "HEAD", branch, check=False)
+        target_result = self._run(repository.root, "rev-parse", branch, check=False)
+        if base_result.returncode == 0 and target_result.returncode == 0:
+            if base_result.stdout.strip() == target_result.stdout.strip():
+                return "up_to_date"
+        result = self._run(repository.root, "merge-tree", "--write-tree", "HEAD", branch, check=False)
+        if result.returncode == 0:
+            return "clean"
+        if result.returncode == 1:
+            return "conflict"
+        return "unknown"
+
+    def merge_previews(self, repository: RepositoryInfo) -> dict[str, str]:
+        return {branch.name: self.merge_preview(repository, branch.name) for branch in self.branches(repository)}
+
     def merge(self, repository: RepositoryInfo, branch: str) -> GitMergeResult:
         if self.status(repository):
             raise GitRepositoryError("Commit or stash your changes before merging.")
