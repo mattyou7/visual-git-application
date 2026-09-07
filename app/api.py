@@ -155,7 +155,7 @@ def _status_for_path(statuses: list[GitFileStatus]) -> dict[str, GitFileStatus]:
 
 
 def _status_label(status: GitFileStatus) -> str:
-    return status.label
+    return status.code
 
 
 def _file_item(path: Path, status_map: dict[str, GitFileStatus]) -> dict[str, Any]:

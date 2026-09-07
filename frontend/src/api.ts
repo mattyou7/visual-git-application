@@ -8,7 +8,7 @@
 
 // ─── Shared types ───────────────────────────────────────────────────────────
 
-export type GitStatus = "M" | "A" | "D" | "R" | "?" | "staged" | "clean";
+export type GitStatus = "M" | "A" | "D" | "R" | "U" | "C" | "staged" | "clean";
 
 export interface FileItem {
   id: string;

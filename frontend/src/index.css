@@ -37,6 +37,7 @@ body,
   --git-renamed: #7c3aed;
   --git-untracked: #0891b2;
   --git-staged: #059669;
+  --git-conflict: #b91c1c;
 
   --sidebar-w: 220px;
   --topbar-h: 52px;

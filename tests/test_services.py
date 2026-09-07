@@ -253,7 +253,7 @@ class GitRepositoryServiceTests(unittest.TestCase):
             self.assertEqual(tracked.read_text(), "version one")
             self.assertEqual(len(service.history(repository)), 2)
 
-    def test_branch_create_switch_rename_delete_and_dirty_safety(self) -> None:
+    def test_branch_create_switch_rename_delete(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             tracked = root / "tracked.txt"
@@ -277,9 +277,61 @@ class GitRepositoryServiceTests(unittest.TestCase):
             service.delete_branch(repository, "renamed-feature")
             self.assertNotIn("renamed-feature", [branch.name for branch in service.branches(repository)])
 
+    def test_switch_branch_carries_non_conflicting_dirty_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            tracked = root / "tracked.txt"
+            tracked.write_text("initial")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            environment = ["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+            subprocess.run([*environment, "commit", "-qm", "initial"], check=True)
+            repository = GitRepositoryService().detect(root)
+            self.assertIsNotNone(repository)
+            service = GitRepositoryService()
+            default_branch = repository.branch
+            self.assertIsNotNone(default_branch)
+
+            # A branch that never touches tracked.txt, so an uncommitted edit
+            # on the default branch does not conflict with it.
+            service.create_branch(repository, "feature")
+            service.switch_branch(repository, default_branch)
+
             tracked.write_text("dirty")
-            with self.assertRaisesRegex(GitRepositoryError, "before switching"):
+            service.switch_branch(repository, "feature")
+            self.assertEqual(service.detect(root).branch, "feature")
+            self.assertEqual(tracked.read_text(), "dirty")
+            self.assertTrue(any(status.path == Path("tracked.txt") for status in service.status(repository)))
+
+    def test_switch_branch_rejects_conflicting_dirty_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            tracked = root / "tracked.txt"
+            tracked.write_text("initial")
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            environment = ["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+            subprocess.run([*environment, "commit", "-qm", "initial"], check=True)
+            repository = GitRepositoryService().detect(root)
+            self.assertIsNotNone(repository)
+            service = GitRepositoryService()
+            default_branch = repository.branch
+            self.assertIsNotNone(default_branch)
+
+            # A branch that commits a different version of tracked.txt, so an
+            # uncommitted edit on the default branch would be overwritten.
+            service.create_branch(repository, "feature")
+            tracked.write_text("feature version")
+            subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+            subprocess.run([*environment, "commit", "-qm", "feature edits tracked"], check=True)
+            service.switch_branch(repository, default_branch)
+
+            tracked.write_text("dirty")
+            with self.assertRaises(GitRepositoryError):
                 service.switch_branch(repository, "feature")
+            # The switch must not have happened, and the local edit must survive.
+            self.assertEqual(service.detect(root).branch, default_branch)
+            self.assertEqual(tracked.read_text(), "dirty")
 
     def test_branch_tips_are_real_commit_hashes(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:

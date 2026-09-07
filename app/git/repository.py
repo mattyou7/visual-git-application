@@ -26,6 +26,13 @@ class GitFileStatus:
 
     @property
     def label(self) -> str:
+        if (
+            self.index_code == "U"
+            or self.worktree_code == "U"
+            or (self.index_code == "A" and self.worktree_code == "A")
+            or (self.index_code == "D" and self.worktree_code == "D")
+        ):
+            return "Conflicted"
         if self.index_code == "?" and self.worktree_code == "?":
             return "Untracked"
         if self.index_code == "A" or self.worktree_code == "A":
@@ -37,6 +44,18 @@ class GitFileStatus:
         return "Modified"
 
     @property
+    def code(self) -> str:
+        """Short status code matching the letters VS Code shows (M/A/D/R/U/C)."""
+        return {
+            "Untracked": "U",
+            "Added": "A",
+            "Deleted": "D",
+            "Renamed": "R",
+            "Modified": "M",
+            "Conflicted": "C",
+        }[self.label]
+
+    @property
     def symbol(self) -> str:
         return {
             "Untracked": "?",
@@ -44,6 +63,7 @@ class GitFileStatus:
             "Deleted": "x",
             "Renamed": "↔",
             "Modified": "●",
+            "Conflicted": "!",
         }[self.label]
 
 
@@ -208,9 +228,13 @@ class GitRepositoryService:
         self._run(repository.root, *arguments, check=True)
 
     def switch_branch(self, repository: RepositoryInfo, name: str) -> None:
-        if self.status(repository):
-            raise GitRepositoryError("Commit or stash your changes before switching branches.")
-        self._run(repository.root, "switch", name, check=True)
+        clean_name = name.strip()
+        if not clean_name:
+            raise GitRepositoryError("Enter a branch name.")
+        result = self._run(repository.root, "switch", clean_name, check=False)
+        if result.returncode != 0:
+            message = result.stderr.strip() or result.stdout.strip() or "Git could not switch to that branch."
+            raise GitRepositoryError(message)
 
     def delete_branch(self, repository: RepositoryInfo, name: str) -> None:
         self._run(repository.root, "branch", "-d", name, check=True)

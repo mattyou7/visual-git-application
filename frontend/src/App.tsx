@@ -55,7 +55,8 @@ function GitDot({ status }: { status: GitStatus }) {
     A: { label: "A", color: "var(--git-added)" },
     D: { label: "D", color: "var(--git-deleted)" },
     R: { label: "R", color: "var(--git-renamed)" },
-    "?": { label: "?", color: "var(--git-untracked)" },
+    U: { label: "U", color: "var(--git-untracked)" },
+    C: { label: "C", color: "var(--git-conflict)" },
     staged: { label: "S", color: "var(--git-staged)" },
     clean: { label: "", color: "transparent" },
   };
@@ -1221,7 +1222,8 @@ function GitPanel({ staged, unstaged, commitMsg, setCommitMsg, onCommit, onToggl
 
   const statusColor = (s: GitStatus) => ({
     M: "var(--git-modified)", A: "var(--git-added)", D: "var(--git-deleted)",
-    R: "var(--git-renamed)", "?": "var(--git-untracked)", staged: "var(--git-staged)", clean: "transparent",
+    R: "var(--git-renamed)", U: "var(--git-untracked)", C: "var(--git-conflict)",
+    staged: "var(--git-staged)", clean: "transparent",
   } as Record<GitStatus, string>)[s] ?? "transparent";
 
   const ChangeRow = ({ c }: { c: GitChange }) => (
