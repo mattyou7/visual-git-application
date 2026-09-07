@@ -1,0 +1,10 @@
+{
+  "description": "A minimalist, professional Git UI that prioritizes file management with light/dark themes and subtle icon animations for an enhanced developer experience.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
