@@ -5,11 +5,13 @@ import os
 import platform
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from typing import Any, Callable, Optional, TypeVar
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from app.filesystem.operations import FilesystemError, FilesystemService
@@ -33,6 +35,36 @@ from app.remote.provider import GitHubProvider, RemoteProviderError
 
 
 app = FastAPI(title="Visual Git API", version="1.0.0")
+def _frontend_dist() -> Path:
+    """Locate the React production build in source and PyInstaller builds."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "frontend" / "dist"
+
+    return Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+
+FRONTEND_DIST = _frontend_dist()
+FRONTEND_ASSETS = FRONTEND_DIST / "assets"
+
+if FRONTEND_ASSETS.is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(FRONTEND_ASSETS)),
+        name="frontend-assets",
+    )
+
+
+@app.get("/")
+def frontend_index() -> FileResponse:
+    index = FRONTEND_DIST / "index.html"
+
+    if not index.is_file():
+        raise HTTPException(
+            status_code=503,
+            detail="Frontend build not found.",
+        )
+
+    return FileResponse(index)
 
 filesystem = FilesystemService()
 git = GitRepositoryService()

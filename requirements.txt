@@ -10,10 +10,7 @@ npm==0.1.1
 optional-django==0.1.0
 pydantic==2.13.5
 pydantic_core==2.46.5
-PySide6==6.10.3
-PySide6_Addons==6.10.3
-PySide6_Essentials==6.10.3
-shiboken6==6.10.3
+pywebview==6.2.1
 starlette==0.49.3
 typing-inspection==0.4.2
 typing_extensions==4.16.0

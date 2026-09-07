@@ -1,47 +1,50 @@
 from __future__ import annotations
 
 import logging
-import os
-import subprocess
 import sys
 import time
-from pathlib import Path
+import urllib.request
+from threading import Thread
 
 import uvicorn
-from PySide6.QtCore import QUrl, QTimer
-from PySide6.QtWidgets import QApplication, QMainWindow
-from PySide6.QtWebEngineWidgets import QWebEngineView
+import webview
+from app.api import app as fastapi_app
 
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-FRONTEND_DIR = PROJECT_ROOT / "frontend"
 API_HOST = "127.0.0.1"
 API_PORT = 8000
-FRONTEND_URL = "http://127.0.0.1:5173"
+APP_URL = f"http://{API_HOST}:{API_PORT}"
+APP_NAME = "GitFinder"
+STARTUP_TIMEOUT_SECONDS = 15
 
 
 def start_api_server() -> None:
-    """Run FastAPI in a background thread so the Qt UI can use it."""
+    """Run FastAPI in a background thread. It also serves the built frontend
+    (frontend/dist) at "/", so this single server is the whole app backend."""
     uvicorn.run(
-        "app.api:app",
+        fastapi_app,
         host=API_HOST,
         port=API_PORT,
         log_level="info",
     )
 
 
-def start_frontend_dev_server() -> subprocess.Popen:
-    """Start the Vite React development server."""
-    npm = "npm"
-    if sys.platform == "win32":
-        npm = "npm.cmd"
+def _server_is_ready() -> bool:
+    try:
+        with urllib.request.urlopen(f"{APP_URL}/api/health", timeout=0.5) as response:
+            return response.status == 200
+    except OSError:
+        return False
 
-    return subprocess.Popen(
-        [npm, "run", "dev", "--", "--host", "127.0.0.1", "--port", "5173"],
-        cwd=str(FRONTEND_DIR),
-        stdout=None,
-        stderr=None,
-        env=os.environ.copy(),
+
+def _wait_for_server() -> None:
+    deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if _server_is_ready():
+            return
+        time.sleep(0.05)
+    logging.getLogger(__name__).warning(
+        "API server did not respond within %s seconds; loading window anyway.",
+        STARTUP_TIMEOUT_SECONDS,
     )
 
 
@@ -51,43 +54,16 @@ def main() -> int:
         format="%(levelname)s %(name)s: %(message)s",
     )
 
-    application = QApplication(sys.argv)
-    application.setApplicationName("Visual Git Workspace")
-
-    # Start FastAPI in a background thread.
-    from threading import Thread
-
     api_thread = Thread(target=start_api_server, daemon=True)
     api_thread.start()
+    _wait_for_server()
 
-    # Start the React/Vite frontend.
-    frontend_process = start_frontend_dev_server()
-
-    # Give the two local servers a moment to start before loading the UI.
-    window = QMainWindow()
-    window.setWindowTitle("Visual Git Workspace")
-    window.resize(1400, 900)
-
-    webview = QWebEngineView()
-    window.setCentralWidget(webview)
-    window.show()
-
-    def load_frontend() -> None:
-        webview.setUrl(QUrl(FRONTEND_URL))
-
-    QTimer.singleShot(2500, load_frontend)
-
-    def cleanup() -> None:
-        if frontend_process.poll() is None:
-            frontend_process.terminate()
-            try:
-                frontend_process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                frontend_process.kill()
-
-    application.aboutToQuit.connect(cleanup)
-
-    return application.exec()
+    # pywebview renders through the OS's own webview (WKWebView on macOS,
+    # WebView2 on Windows, WebKitGTK on Linux) instead of bundling Chromium,
+    # which keeps a packaged build small.
+    webview.create_window(APP_NAME, APP_URL, width=1400, height=900, min_size=(900, 600))
+    webview.start()
+    return 0
 
 
 if __name__ == "__main__":
