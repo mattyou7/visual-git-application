@@ -1,76 +1,22 @@
-import { useState, useCallback, useRef } from "react";
-import { useEffect } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
+import * as api from "./api";
+import type {
+  FileItem,
+  GitStatus,
+  GitChange,
+  SidebarLocation,
+  RecentRepository,
+  GitBranch,
+  GitCommit,
+  GitConflictState,
+  GitHubStatus,
+} from "./api";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Local UI types ─────────────────────────────────────────────────────────
 
 type Theme = "dark" | "light";
 type ViewMode = "list" | "grid";
-type GitStatus = "M" | "A" | "D" | "R" | "?" | "staged" | "clean";
-
-interface FileItem {
-  id: string;
-  name: string;
-  type: "folder" | "file";
-  ext?: string;
-  size?: string;
-  modified: string;
-  gitStatus?: GitStatus;
-}
-
-interface SidebarLocation {
-  id: string;
-  label: string;
-  path: string;
-  icon: string;
-}
-
-interface GitChange {
-  path: string;
-  status: GitStatus;
-  staged: boolean;
-}
-
-// ─── Mock Data ─────────────────────────────────────────────────────────────────
-
-const MOCK_FILES: FileItem[] = [
-  { id: "1", name: "src", type: "folder", modified: "2 min ago", gitStatus: "M" },
-  { id: "2", name: "tests", type: "folder", modified: "1 hr ago" },
-  { id: "3", name: "docs", type: "folder", modified: "3 days ago" },
-  { id: "4", name: "node_modules", type: "folder", modified: "5 days ago" },
-  { id: "5", name: "README.md", type: "file", ext: "md", size: "3.2 KB", modified: "2 min ago", gitStatus: "M" },
-  { id: "6", name: "package.json", type: "file", ext: "json", size: "1.1 KB", modified: "1 hr ago", gitStatus: "staged" },
-  { id: "7", name: "tsconfig.json", type: "file", ext: "json", size: "512 B", modified: "3 days ago" },
-  { id: "8", name: "vite.config.ts", type: "file", ext: "ts", size: "890 B", modified: "5 days ago" },
-  { id: "9", name: ".gitignore", type: "file", ext: "gitignore", size: "280 B", modified: "2 wks ago" },
-  { id: "10", name: "index.html", type: "file", ext: "html", size: "640 B", modified: "5 days ago" },
-  { id: "11", name: "CHANGELOG.md", type: "file", ext: "md", size: "12 KB", modified: "6 days ago" },
-  { id: "12", name: "LICENSE", type: "file", size: "1.1 KB", modified: "2 mos ago" },
-  { id: "13", name: ".env.example", type: "file", ext: "env", size: "180 B", modified: "1 wk ago", gitStatus: "A" },
-  { id: "14", name: "docker-compose.yml", type: "file", ext: "yml", size: "420 B", modified: "4 days ago", gitStatus: "?" },
-];
-
-const MOCK_CHANGES: GitChange[] = [
-  { path: "src/components/FileTree.tsx", status: "M", staged: false },
-  { path: "src/services/git.ts", status: "M", staged: false },
-  { path: "README.md", status: "M", staged: false },
-  { path: ".env.example", status: "A", staged: false },
-  { path: "docker-compose.yml", status: "?", staged: false },
-  { path: "package.json", status: "M", staged: true },
-  { path: "src/index.css", status: "M", staged: true },
-];
-
-const SIDEBAR_LOCATIONS: SidebarLocation[] = [
-  { id: "home", label: "Home", path: "~", icon: "home" },
-  { id: "desktop", label: "Desktop", path: "~/Desktop", icon: "desktop" },
-  { id: "downloads", label: "Downloads", path: "~/Downloads", icon: "download" },
-  { id: "documents", label: "Documents", path: "~/Documents", icon: "doc" },
-];
-
-const RECENT_REPOS = [
-  { name: "visual-git-app", branch: "main", path: "~/projects/visual-git-app", dirty: true },
-  { name: "portfolio-v3", branch: "feat/dark-mode", path: "~/projects/portfolio-v3", dirty: false },
-  { name: "api-gateway", branch: "main", path: "~/work/api-gateway", dirty: false },
-];
+type PanelName = "history" | "branches" | "graph" | "conflicts" | null;
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -82,20 +28,21 @@ function FolderIcon({ color = "currentColor" }: { color?: string }) {
   );
 }
 
-function FileIcon({ ext = "" }: { ext?: string }) {
+function FileIcon({ ext = "" }: { ext?: string | null }) {
   const extColors: Record<string, string> = {
     ts: "#3b82f6", tsx: "#06b6d4", js: "#f59e0b", jsx: "#06b6d4",
     json: "#10b981", md: "#8b5cf6", html: "#f97316", css: "#ec4899",
     yml: "#f59e0b", yaml: "#f59e0b", env: "#16a34a", gitignore: "#6b7280",
   };
-  const color = extColors[ext] ?? "var(--text-faint)";
+  const safeExt = ext ?? "";
+  const color = extColors[safeExt] ?? "var(--text-faint)";
   return (
     <svg width="16" height="18" viewBox="0 0 16 18" fill="none">
       <path d="M2 2a1 1 0 011-1h8l3 3v12a1 1 0 01-1 1H3a1 1 0 01-1-1V2z" fill={color} fillOpacity="0.12" stroke={color} strokeWidth="1.2" />
       <path d="M10 1v3h3" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
-      {ext && (
+      {safeExt && (
         <text x="8" y="13.5" textAnchor="middle" fontSize="4.5" fontFamily="JetBrains Mono, monospace" fontWeight="500" fill={color}>
-          {ext.toUpperCase().slice(0, 3)}
+          {safeExt.toUpperCase().slice(0, 3)}
         </text>
       )}
     </svg>
@@ -132,20 +79,13 @@ function GitFinderLogo({ size = 24 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
       <rect width="32" height="32" rx="8" fill="var(--accent)" />
-      {/* Folder body */}
       <rect x="4" y="13" width="24" height="14" rx="2.5" fill="var(--accent-fg)" fillOpacity="0.18" stroke="var(--accent-fg)" strokeWidth="1.4" />
-      {/* Folder tab */}
       <path d="M4 13v-2.5A2 2 0 016 8.5h5.5l2 2H26" stroke="var(--accent-fg)" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      {/* Git commit node - center */}
       <circle cx="16" cy="20" r="2.5" fill="var(--accent-fg)" />
-      {/* Branch lines */}
       <line x1="9" y1="20" x2="13.5" y2="20" stroke="var(--accent-fg)" strokeWidth="1.4" strokeLinecap="round" />
       <line x1="18.5" y1="20" x2="23" y2="20" stroke="var(--accent-fg)" strokeWidth="1.4" strokeLinecap="round" />
-      {/* Branch dot left */}
       <circle cx="8" cy="20" r="1.5" fill="var(--accent-fg)" fillOpacity="0.55" />
-      {/* Branch dot right */}
       <circle cx="24" cy="20" r="1.5" fill="var(--accent-fg)" fillOpacity="0.55" />
-      {/* Branch arm going up-right */}
       <path d="M22.5 20v-3.5" stroke="var(--accent-fg)" strokeWidth="1.3" strokeLinecap="round" opacity="0.6" />
       <circle cx="22.5" cy="15.5" r="1.2" fill="var(--accent-fg)" fillOpacity="0.5" />
     </svg>
@@ -236,7 +176,6 @@ function ToolDivider() {
 // ─── SVG Icon Set ─────────────────────────────────────────────────────────────
 
 const I = {
-  // Theme — moon = dark mode active, sun = light mode active
   sun: (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
       <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.4" />
@@ -255,20 +194,17 @@ const I = {
   ),
   list: <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><line x1="3" y1="4" x2="13" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><line x1="3" y1="8" x2="13" y2="8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/><line x1="3" y1="12" x2="13" y2="12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>,
   grid: <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4"/><rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4"/><rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4"/><rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" strokeWidth="1.4"/></svg>,
-  // Up arrow — clean chevron upward with tail
   up: (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
       <path d="M8 13V4M4.5 7.5L8 4l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   ),
-  // Refresh — classic circular arrows (↺)
   refresh: (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
       <path d="M13.5 8A5.5 5.5 0 113.2 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
       <path d="M3 2v3h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
     </svg>
   ),
-  // History — vertical commit log with nodes
   history: (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
       <circle cx="4" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.2"/>
@@ -281,7 +217,6 @@ const I = {
       <line x1="7" y1="11" x2="12" y2="11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
     </svg>
   ),
-  // Merge — two branches converging (Y shape, upside down)
   merge: (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
       <circle cx="4" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.2"/>
@@ -342,7 +277,6 @@ const I = {
   ),
   unstage: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 4v7M4 8l3 3 3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/><line x1="2" y1="2.5" x2="12" y2="2.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>,
   commit: <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="2.5" stroke="currentColor" strokeWidth="1.3"/><line x1="1" y1="7" x2="4.5" y2="7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/><line x1="9.5" y1="7" x2="13" y2="7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>,
-  // Graph — dot grid connected (DAG-style)
   graph: (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
       <circle cx="3" cy="11" r="1.5" stroke="currentColor" strokeWidth="1.2"/>
@@ -371,8 +305,89 @@ const I = {
 };
 
 const sidebarIconMap: Record<string, React.ReactNode> = {
-  home: I.home, desktop: I.desktop, download: I.download, doc: I.doc,
+  home: I.home, desktop: I.desktop, downloads: I.download, documents: I.doc,
 };
+
+// ─── Path helpers ────────────────────────────────────────────────────────────
+
+function pathSegments(path: string): { label: string; path: string }[] {
+  if (!path) return [];
+  const isWindows = /^[a-zA-Z]:\\/.test(path);
+  const sep = isWindows ? "\\" : "/";
+  const parts = path.split(sep).filter(Boolean);
+  const segments: { label: string; path: string }[] = [];
+  if (isWindows) {
+    let accumulated = "";
+    parts.forEach((part, i) => {
+      accumulated = i === 0 ? part + sep : accumulated + part + sep;
+      segments.push({ label: part, path: accumulated.replace(/\\$/, "") });
+    });
+    return segments;
+  }
+  segments.push({ label: "/", path: "/" });
+  let accumulated = "";
+  for (const part of parts) {
+    accumulated += "/" + part;
+    segments.push({ label: part, path: accumulated });
+  }
+  return segments;
+}
+
+function parentPath(path: string): string {
+  const segments = pathSegments(path);
+  if (segments.length <= 1) return path;
+  return segments[segments.length - 2].path;
+}
+
+// ─── Small shared building blocks ───────────────────────────────────────────
+
+function Toast({ message, onClose }: { message: string; onClose: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 5000);
+    return () => clearTimeout(timer);
+  }, [message, onClose]);
+  return (
+    <div style={{
+      position: "fixed", bottom: 16, left: "50%", transform: "translateX(-50%)",
+      background: "var(--surface-raised, var(--surface))", border: "1px solid var(--git-deleted)",
+      color: "var(--text)", padding: "9px 16px", borderRadius: 8, fontSize: 12.5,
+      fontFamily: "var(--font-ui)", boxShadow: "0 6px 20px rgba(0,0,0,0.25)", zIndex: 1000,
+      display: "flex", alignItems: "center", gap: 10, maxWidth: 480,
+    }}>
+      <span style={{ color: "var(--git-deleted)", flexShrink: 0 }}>⚠</span>
+      <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{message}</span>
+      <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-faint)", cursor: "pointer", fontSize: 14, marginLeft: 4 }}>×</button>
+    </div>
+  );
+}
+
+function Panel({ title, onClose, children, width = 340 }: { title: string; onClose: () => void; children: React.ReactNode; width?: number }) {
+  return (
+    <div style={{
+      position: "absolute", top: 44, right: 12, width, maxHeight: 420, overflowY: "auto",
+      background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 10,
+      boxShadow: "0 12px 32px rgba(0,0,0,0.3)", zIndex: 50,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 14px", borderBottom: "1px solid var(--border-subtle)", position: "sticky", top: 0, background: "var(--surface)" }}>
+        <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-faint)" }}>{title}</span>
+        <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-faint)", cursor: "pointer", fontSize: 15 }}>×</button>
+      </div>
+      <div style={{ padding: "8px 0" }}>{children}</div>
+    </div>
+  );
+}
+
+function PanelRow({ children, onClick }: { children: React.ReactNode; onClick?: () => void }) {
+  return (
+    <div onClick={onClick}
+      style={{ padding: "7px 14px", fontSize: 12.5, cursor: onClick ? "pointer" : "default", display: "flex", alignItems: "center", gap: 8, borderBottom: "1px solid var(--border-subtle)" }}
+      onMouseEnter={e => { if (onClick) (e.currentTarget as HTMLElement).style.background = "var(--border-subtle)"; }}
+      onMouseLeave={e => { if (onClick) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+    >
+      {children}
+    </div>
+  );
+}
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -380,36 +395,146 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>("dark");
   const [view, setView] = useState<ViewMode>("list");
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
-  const [selectedLocation, setSelectedLocation] = useState("home");
-  const [changes, setChanges] = useState<GitChange[]>(MOCK_CHANGES);
-  const [commitMsg, setCommitMsg] = useState("");
-  const [commitDone, setCommitDone] = useState(false);
   const [gitPanelOpen, setGitPanelOpen] = useState(true);
   const [searchFocused, setSearchFocused] = useState(false);
-  const [currentPath] = useState(["~", "projects", "visual-git-app"]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<api.SearchMatch[] | null>(null);
+
+  // Real filesystem/Git state (no mock data).
+  const [currentDirectory, setCurrentDirectory] = useState<string>("");
+  const [repository, setRepository] = useState<api.RepositoryInfo | null>(null);
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [locations, setLocations] = useState<SidebarLocation[]>([]);
+  const [recentRepos, setRecentRepos] = useState<RecentRepository[]>([]);
+  const [changes, setChanges] = useState<GitChange[]>([]);
+  const [commitMsg, setCommitMsg] = useState("");
+  const [commitDone, setCommitDone] = useState(false);
+  const [clipboardMode, setClipboardMode] = useState<"copy" | "cut" | null>(null);
+  const [githubStatus, setGithubStatus] = useState<GitHubStatus>({ connected: false, username: null });
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Overlay panels (History / Branches / Graph / Conflicts) - one at a time.
+  const [activePanel, setActivePanel] = useState<PanelName>(null);
+  const [branches, setBranches] = useState<GitBranch[]>([]);
+  const [historyCommits, setHistoryCommits] = useState<GitCommit[]>([]);
+  const [graphCommits, setGraphCommits] = useState<GitCommit[]>([]);
+  const [conflictState, setConflictState] = useState<GitConflictState | null>(null);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);
 
-  const staged = changes.filter(c => c.staged);
-  const unstaged = changes.filter(c => !c.staged);
-
-  const toggleStage = useCallback((path: string) => {
-    setChanges(prev => prev.map(c => c.path === path ? { ...c, staged: !c.staged } : c));
+  const showError = useCallback((error: unknown) => {
+    const message = error instanceof api.ApiRequestError ? error.message : "Something went wrong. Please try again.";
+    setErrorMessage(message);
   }, []);
 
-  const stageAll = useCallback(() => {
-    setChanges(prev => prev.map(c => ({ ...c, staged: true })));
+  // ── Loading real data ──────────────────────────────────────────────────
+
+  const loadFiles = useCallback(async (path: string) => {
+    try {
+      const result = await api.getFiles(path);
+      setCurrentDirectory(result.path);
+      setRepository(result.repository);
+      setFiles(result.items);
+      setSearchResults(null);
+      setSearchQuery("");
+      setSelectedFiles(new Set());
+    } catch (error) {
+      showError(error);
+    }
+  }, [showError]);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const status = await api.getGitStatus();
+      setChanges(status.changes);
+    } catch (error) {
+      if (!(error instanceof api.ApiRequestError && error.code === "NO_REPOSITORY_OPEN")) {
+        showError(error);
+      } else {
+        setChanges([]);
+      }
+    }
+  }, [showError]);
+
+  const loadSidebarData = useCallback(async () => {
+    try {
+      const [locs, recents] = await Promise.all([api.getLocations(), api.getRecentRepositories()]);
+      setLocations(locs);
+      setRecentRepos(recents);
+    } catch (error) {
+      showError(error);
+    }
+  }, [showError]);
+
+  const loadGithubStatus = useCallback(async () => {
+    try {
+      setGithubStatus(await api.getGitHubStatus());
+    } catch {
+      // GitHub status is a non-critical, best-effort read on load.
+    }
   }, []);
 
-  const handleCommit = useCallback(() => {
-    if (!commitMsg.trim() || staged.length === 0) return;
-    setChanges(prev => prev.filter(c => !c.staged));
-    setCommitMsg("");
-    setCommitDone(true);
-    setTimeout(() => setCommitDone(false), 2200);
-  }, [commitMsg, staged]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const current = await api.getCurrentRepository();
+        setCurrentDirectory(current.path);
+        setRepository(current.repository);
+        await loadFiles(current.path);
+        if (current.repository) await loadStatus();
+      } catch (error) {
+        showError(error);
+      }
+      await loadSidebarData();
+      await loadGithubStatus();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const refreshFiles = useCallback(() => loadFiles(currentDirectory), [loadFiles, currentDirectory]);
+
+  const refreshAfterGitMutation = useCallback(async () => {
+    await loadStatus();
+    await refreshFiles();
+  }, [loadStatus, refreshFiles]);
+
+  // ── Navigation ──────────────────────────────────────────────────────────
+
+  const handleOpenPath = useCallback(async (path: string) => {
+    try {
+      const result = await api.openRepository(path);
+      setCurrentDirectory(result.path);
+      setRepository(result.repository);
+      await loadFiles(result.path);
+      if (result.repository) await loadStatus();
+      await loadSidebarData();
+    } catch (error) {
+      showError(error);
+    }
+  }, [loadFiles, loadStatus, loadSidebarData, showError]);
+
+  const handleOpenClick = useCallback(() => {
+    const path = window.prompt("Open folder or repository path:", currentDirectory || "");
+    if (path && path.trim()) void handleOpenPath(path.trim());
+  }, [currentDirectory, handleOpenPath]);
+
+  const handleUp = useCallback(() => {
+    if (!currentDirectory) return;
+    void loadFiles(parentPath(currentDirectory));
+  }, [currentDirectory, loadFiles]);
+
+  const handleRefresh = useCallback(() => {
+    void refreshFiles();
+    if (repository) void loadStatus();
+  }, [refreshFiles, repository, loadStatus]);
+
+  const handleFolderOpen = useCallback((item: FileItem) => {
+    if (item.type === "folder") void handleOpenPath(item.id);
+  }, [handleOpenPath]);
+
+  // ── Selection ─────────────────────────────────────────────────────────
 
   const toggleSelect = (id: string, e: React.MouseEvent) => {
     const next = new Set(selectedFiles);
@@ -419,82 +544,330 @@ export default function App() {
     setSelectedFiles(next);
   };
 
+  const selectedPaths = Array.from(selectedFiles);
+
+  // ── Filesystem operations ────────────────────────────────────────────────
+
+  const handleNew = useCallback(async () => {
+    const name = window.prompt("New folder name:");
+    if (!name || !name.trim()) return;
+    try {
+      await api.createFolder(currentDirectory, name.trim());
+      await refreshFiles();
+    } catch (error) {
+      showError(error);
+    }
+  }, [currentDirectory, refreshFiles, showError]);
+
+  const handleRename = useCallback(async () => {
+    if (selectedPaths.length !== 1) return;
+    const current = files.find(f => f.id === selectedPaths[0]);
+    const name = window.prompt("New name:", current?.name ?? "");
+    if (!name || !name.trim()) return;
+    try {
+      await api.renameFile(selectedPaths[0], name.trim());
+      await refreshFiles();
+    } catch (error) {
+      showError(error);
+    }
+  }, [selectedPaths, files, refreshFiles, showError]);
+
+  const handleDelete = useCallback(async () => {
+    if (selectedPaths.length === 0) return;
+    if (!window.confirm(`Delete ${selectedPaths.length} item(s)? This cannot be undone.`)) return;
+    try {
+      await api.deleteFiles(selectedPaths);
+      await refreshFiles();
+      if (repository) await loadStatus();
+    } catch (error) {
+      showError(error);
+    }
+  }, [selectedPaths, refreshFiles, repository, loadStatus, showError]);
+
+  const handleCopy = useCallback(async () => {
+    if (selectedPaths.length === 0) return;
+    try {
+      await api.clipboardCopy(selectedPaths);
+      setClipboardMode("copy");
+    } catch (error) {
+      showError(error);
+    }
+  }, [selectedPaths, showError]);
+
+  const handleCut = useCallback(async () => {
+    if (selectedPaths.length === 0) return;
+    try {
+      await api.clipboardCut(selectedPaths);
+      setClipboardMode("cut");
+    } catch (error) {
+      showError(error);
+    }
+  }, [selectedPaths, showError]);
+
+  const handlePaste = useCallback(async () => {
+    if (!clipboardMode) return;
+    try {
+      await api.clipboardPaste(currentDirectory);
+      if (clipboardMode === "cut") setClipboardMode(null);
+      await refreshFiles();
+      if (repository) await loadStatus();
+    } catch (error) {
+      showError(error);
+    }
+  }, [clipboardMode, currentDirectory, refreshFiles, repository, loadStatus, showError]);
+
+  const handleFileDoubleClick = useCallback(async (item: FileItem) => {
+    if (item.type === "folder") { handleFolderOpen(item); return; }
+    try {
+      await api.openFile(item.id);
+    } catch (error) {
+      showError(error);
+    }
+  }, [handleFolderOpen, showError]);
+
+  // ── Search ────────────────────────────────────────────────────────────
+
+  const handleSearchKeyDown = useCallback(async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== "Enter") return;
+    if (!searchQuery.trim()) { setSearchResults(null); return; }
+    try {
+      const results = await api.searchFiles(searchQuery.trim(), currentDirectory);
+      setSearchResults(results);
+    } catch (error) {
+      showError(error);
+    }
+  }, [searchQuery, currentDirectory, showError]);
+
+  // ── Git: staging / commit ────────────────────────────────────────────────
+
+  const staged = changes.filter(c => c.staged);
+  const unstaged = changes.filter(c => !c.staged);
+
+  const toggleStage = useCallback(async (path: string) => {
+    const change = changes.find(c => c.path === path);
+    if (!change) return;
+    try {
+      const status = change.staged ? await api.unstageFiles([path]) : await api.stageFiles([path]);
+      setChanges(status.changes);
+    } catch (error) {
+      showError(error);
+    }
+  }, [changes, showError]);
+
+  const stageAllChanges = useCallback(async () => {
+    try {
+      const status = await api.stageAll();
+      setChanges(status.changes);
+    } catch (error) {
+      showError(error);
+    }
+  }, [showError]);
+
+  const handleStageSelected = useCallback(async () => {
+    if (selectedPaths.length === 0) return;
+    try {
+      const status = await api.stageFiles(selectedPaths);
+      setChanges(status.changes);
+    } catch (error) {
+      showError(error);
+    }
+  }, [selectedPaths, showError]);
+
+  const handleUnstageSelected = useCallback(async () => {
+    if (selectedPaths.length === 0) return;
+    try {
+      const status = await api.unstageFiles(selectedPaths);
+      setChanges(status.changes);
+    } catch (error) {
+      showError(error);
+    }
+  }, [selectedPaths, showError]);
+
+  const handleCommit = useCallback(async () => {
+    if (!commitMsg.trim() || staged.length === 0) return;
+    try {
+      const status = await api.commit(commitMsg.trim());
+      setChanges(status.changes);
+      setCommitMsg("");
+      setCommitDone(true);
+      await refreshFiles();
+      setTimeout(() => setCommitDone(false), 2200);
+    } catch (error) {
+      showError(error);
+    }
+  }, [commitMsg, staged.length, refreshFiles, showError]);
+
+  // ── Git: branches / history / graph / merge / conflicts ─────────────────
+
+  const openPanel = useCallback(async (panel: Exclude<PanelName, null>) => {
+    if (!repository) { setErrorMessage("Open a Git repository first."); return; }
+    setActivePanel(panel);
+    try {
+      if (panel === "branches") setBranches(await api.getBranches());
+      if (panel === "history") setHistoryCommits(await api.getHistory(100));
+      if (panel === "graph") setGraphCommits(await api.getGraph(200));
+      if (panel === "conflicts") setConflictState(await api.getConflicts());
+    } catch (error) {
+      showError(error);
+    }
+  }, [repository, showError]);
+
+  const handleCreateBranch = useCallback(async () => {
+    const name = window.prompt("New branch name:");
+    if (!name || !name.trim()) return;
+    try {
+      const result = await api.createBranch(name.trim());
+      setBranches(result.branches);
+      setRepository(result.repository);
+    } catch (error) {
+      showError(error);
+    }
+  }, [showError]);
+
+  const handleSwitchBranch = useCallback(async (name: string) => {
+    try {
+      const result = await api.switchBranch(name);
+      setRepository(result.repository);
+      setChanges(result.status.changes);
+      await refreshFiles();
+      setBranches(await api.getBranches());
+    } catch (error) {
+      showError(error);
+    }
+  }, [refreshFiles, showError]);
+
+  const handleMerge = useCallback(async () => {
+    const branch = window.prompt("Merge which branch into the current branch?");
+    if (!branch || !branch.trim()) return;
+    try {
+      const result = await api.mergeBranch(branch.trim());
+      if (result.succeeded) {
+        await refreshAfterGitMutation();
+        window.alert(result.message);
+      } else {
+        setConflictState({ inProgress: true, conflicts: result.conflicts });
+        setActivePanel("conflicts");
+        setErrorMessage(result.message);
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }, [refreshAfterGitMutation, showError]);
+
+  const handleConflictAction = useCallback(async (action: "use-current" | "use-incoming" | "mark-resolved", path: string) => {
+    try {
+      const status = action === "use-current" ? await api.useCurrent(path)
+        : action === "use-incoming" ? await api.useIncoming(path)
+        : await api.markResolved(path);
+      setChanges(status.changes);
+      setConflictState(await api.getConflicts());
+      await refreshFiles();
+    } catch (error) {
+      showError(error);
+    }
+  }, [refreshFiles, showError]);
+
+  // ── GitHub ────────────────────────────────────────────────────────────
+
+  const handleGithubToggle = useCallback(async () => {
+    try {
+      if (githubStatus.connected) {
+        setGithubStatus(await api.disconnectGitHub());
+      } else {
+        setGithubStatus(await api.connectGitHub());
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }, [githubStatus.connected, showError]);
+
+  // ── Derived UI data ───────────────────────────────────────────────────
+
+  const displayedFiles = searchResults
+    ? searchResults.map((match, idx): FileItem => ({
+        id: match.path, name: match.name, type: match.type,
+        modified: null, gitStatus: null, ext: match.type === "file" ? (match.name.split(".").pop() ?? null) : null,
+      }))
+    : files;
+
+  const breadcrumb = pathSegments(currentDirectory);
+  const changeCount = changes.length;
+
   return (
-    <div style={{ fontFamily: "var(--font-ui)", background: "var(--bg)", color: "var(--text)", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ fontFamily: "var(--font-ui)", background: "var(--bg)", color: "var(--text)", height: "100%", display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
+      {errorMessage && <Toast message={errorMessage} onClose={() => setErrorMessage(null)} />}
+
       {/* ── Top Bar ─────────────────────────────────────────────────── */}
       <header style={{
         height: "var(--topbar-h)", background: "var(--surface)",
         borderBottom: "1px solid var(--border)", display: "flex",
-        alignItems: "center", padding: "0 14px", gap: 10, flexShrink: 0, zIndex: 10,
+        alignItems: "center", padding: "0 14px", gap: 10, flexShrink: 0, zIndex: 10, position: "relative",
       }}>
-        {/* Brand */}
         <div style={{ display: "flex", alignItems: "center", gap: 9, marginRight: 6, flexShrink: 0 }}>
           <GitFinderLogo size={26} />
           <span style={{ fontWeight: 600, fontSize: 14.5, letterSpacing: "-0.02em", color: "var(--text)" }}>GitFinder</span>
         </div>
 
-        {/* Nav */}
-        <IconBtn onClick={() => {}} title="Parent folder">{I.up}</IconBtn>
-        <IconBtn onClick={() => {}} title="Refresh">{I.refresh}</IconBtn>
+        <IconBtn onClick={handleUp} title="Parent folder">{I.up}</IconBtn>
+        <IconBtn onClick={handleRefresh} title="Refresh">{I.refresh}</IconBtn>
 
-        {/* Breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: 3, flex: 1, overflow: "hidden", minWidth: 0 }}>
-          {currentPath.map((seg, i) => (
-            <span key={i} style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: i < currentPath.length - 1 ? 0 : 1 }}>
+          {breadcrumb.map((seg, i) => (
+            <span key={seg.path} style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: i < breadcrumb.length - 1 ? 0 : 1 }}>
               {i > 0 && <span style={{ color: "var(--text-faint)", display: "flex" }}>{I.chevRight}</span>}
-              <button style={{
+              <button onClick={() => void loadFiles(seg.path)} style={{
                 fontFamily: "var(--font-mono)", fontSize: 12,
-                color: i === currentPath.length - 1 ? "var(--text)" : "var(--text-muted)",
-                fontWeight: i === currentPath.length - 1 ? 500 : 400,
+                color: i === breadcrumb.length - 1 ? "var(--text)" : "var(--text-muted)",
+                fontWeight: i === breadcrumb.length - 1 ? 500 : 400,
                 background: "none", border: "none", cursor: "pointer",
                 padding: "2px 5px", borderRadius: 4, transition: "background 0.12s", whiteSpace: "nowrap",
               }}
               onMouseEnter={e => (e.currentTarget.style.background = "var(--border-subtle)")}
               onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-              >{seg}</button>
+              >{seg.label}</button>
             </span>
           ))}
         </div>
 
-        {/* Search */}
         <div style={{
           display: "flex", alignItems: "center", gap: 7,
           background: "var(--bg)", border: `1px solid ${searchFocused ? "var(--accent)" : "var(--border)"}`,
           borderRadius: 8, padding: "5px 10px", width: 190, transition: "border-color 0.15s", flexShrink: 0,
         }}>
           <span style={{ color: "var(--text-faint)", display: "flex" }}>{I.search}</span>
-          <input onFocus={() => setSearchFocused(true)} onBlur={() => setSearchFocused(false)}
-            placeholder="Search files…"
+          <input
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            onFocus={() => setSearchFocused(true)} onBlur={() => setSearchFocused(false)}
+            placeholder="Search files… (Enter)"
             style={{ background: "none", border: "none", outline: "none", fontSize: 13, color: "var(--text)", fontFamily: "var(--font-ui)", width: "100%" }}
           />
         </div>
 
-        {/* View Toggle */}
         <div style={{ display: "flex", background: "var(--bg)", borderRadius: 7, padding: 2, border: "1px solid var(--border)", gap: 2, flexShrink: 0 }}>
           <IconBtn onClick={() => setView("list")} active={view === "list"} title="List view">{I.list}</IconBtn>
           <IconBtn onClick={() => setView("grid")} active={view === "grid"} title="Grid view">{I.grid}</IconBtn>
         </div>
 
-        {/* Theme toggle — shows current mode icon */}
         <IconBtn onClick={() => setTheme(t => t === "dark" ? "light" : "dark")} title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
           {theme === "dark" ? I.moon : I.sun}
         </IconBtn>
 
-        {/* Branch pill */}
         <div style={{
           display: "flex", alignItems: "center", gap: 6, padding: "5px 11px",
           borderRadius: 7, background: "var(--accent)", color: "var(--accent-fg)",
           fontSize: 12, fontFamily: "var(--font-mono)", fontWeight: 500, flexShrink: 0,
         }}>
           {I.gitBranch}
-          <span>main</span>
-          {changes.length > 0 && (
+          <span>{repository?.branch ?? "no repo"}</span>
+          {changeCount > 0 && (
             <span style={{
               background: "var(--accent-fg)", color: "var(--accent)",
               borderRadius: "50%", width: 15, height: 15,
               display: "inline-flex", alignItems: "center", justifyContent: "center",
               fontSize: 9, fontWeight: 700,
-            }}>{changes.length}</span>
+            }}>{changeCount}</span>
           )}
         </div>
       </header>
@@ -509,10 +882,10 @@ export default function App() {
         }}>
           <div style={{ flex: 1, overflowY: "auto", padding: "14px 0" }}>
             <SidebarSection label="Locations">
-              {SIDEBAR_LOCATIONS.map(loc => (
-                <SidebarBtn key={loc.id} icon={sidebarIconMap[loc.icon]} label={loc.label}
-                  active={selectedLocation === loc.id}
-                  onClick={() => setSelectedLocation(loc.id)}
+              {locations.map(loc => (
+                <SidebarBtn key={loc.id} icon={sidebarIconMap[loc.id] ?? I.doc} label={loc.label}
+                  active={currentDirectory === loc.path}
+                  onClick={() => void loadFiles(loc.path)}
                 />
               ))}
             </SidebarSection>
@@ -520,8 +893,11 @@ export default function App() {
             <div style={{ height: 1, background: "var(--border)", margin: "8px 12px" }} />
 
             <SidebarSection label="Recent Repos">
-              {RECENT_REPOS.map(repo => (
-                <button key={repo.name}
+              {recentRepos.length === 0 && (
+                <div style={{ padding: "6px 16px", fontSize: 11.5, color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>none yet</div>
+              )}
+              {recentRepos.map(repo => (
+                <button key={repo.path} onClick={() => void handleOpenPath(repo.path)}
                   style={{ width: "100%", display: "flex", flexDirection: "column", gap: 3, padding: "7px 16px", background: "transparent", border: "none", borderLeft: "2px solid transparent", cursor: "pointer", textAlign: "left", transition: "background 0.12s" }}
                   onMouseEnter={e => (e.currentTarget.style.background = "var(--border-subtle)")}
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
@@ -531,13 +907,13 @@ export default function App() {
                     <span style={{ fontSize: 12.5, color: "var(--text)", fontWeight: 500 }}>{repo.name}</span>
                     {repo.dirty && <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--git-modified)", flexShrink: 0, marginLeft: "auto" }} />}
                   </div>
-                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-faint)", paddingLeft: 20 }}>{repo.branch}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-faint)", paddingLeft: 20 }}>{repo.branch ?? "—"}</span>
                 </button>
               ))}
             </SidebarSection>
           </div>
 
-          {/* User */}
+          {/* GitHub account */}
           <div style={{ borderTop: "1px solid var(--border)", padding: "10px 14px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
               <div style={{
@@ -545,54 +921,129 @@ export default function App() {
                 background: "var(--accent)", color: "var(--accent-fg)",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: 12, fontWeight: 700, flexShrink: 0,
-              }}>M</div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 600 }}>mattyou7</div>
+              }}>{(githubStatus.username ?? "?").slice(0, 1).toUpperCase()}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {githubStatus.connected ? githubStatus.username : "Not connected"}
+                </div>
                 <div style={{ fontSize: 10, color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>github.com</div>
               </div>
+              <button onClick={() => void handleGithubToggle()} title={githubStatus.connected ? "Disconnect GitHub" : "Connect GitHub"}
+                style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-faint)", background: "none", border: "1px solid var(--border)", borderRadius: 5, padding: "3px 7px", cursor: "pointer" }}
+              >
+                {githubStatus.connected ? "Disconnect" : "Connect"}
+              </button>
             </div>
           </div>
         </aside>
 
         {/* ── Main Content ─────────────────────────────────────────── */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
           {/* Toolbar */}
           <div style={{
             background: "var(--surface)", borderBottom: "1px solid var(--border)",
             padding: "3px 12px", display: "flex", alignItems: "center", gap: 0, flexShrink: 0, overflowX: "auto",
           }}>
-            {/* Filesystem group */}
-            <ToolBtn icon={I.plus} label="New" />
-            <ToolBtn icon={I.openFolder} label="Open" />
-            <ToolBtn icon={I.copy} label="Copy" />
-            <ToolBtn icon={I.cut} label="Cut" />
-            <ToolBtn icon={I.paste} label="Paste" />
-            <ToolBtn icon={I.rename} label="Rename" />
-            <ToolBtn icon={I.trash} label="Delete" />
+            <ToolBtn icon={I.plus} label="New" onClick={() => void handleNew()} />
+            <ToolBtn icon={I.openFolder} label="Open" onClick={handleOpenClick} />
+            <ToolBtn icon={I.copy} label="Copy" onClick={() => void handleCopy()} disabled={selectedPaths.length === 0} />
+            <ToolBtn icon={I.cut} label="Cut" onClick={() => void handleCut()} disabled={selectedPaths.length === 0} />
+            <ToolBtn icon={I.paste} label="Paste" onClick={() => void handlePaste()} disabled={!clipboardMode} />
+            <ToolBtn icon={I.rename} label="Rename" onClick={() => void handleRename()} disabled={selectedPaths.length !== 1} />
+            <ToolBtn icon={I.trash} label="Delete" onClick={() => void handleDelete()} disabled={selectedPaths.length === 0} />
             <ToolDivider />
-            {/* Git group */}
-            <ToolBtn icon={I.stage} label="Stage" />
-            <ToolBtn icon={I.stageAll} label="Stage All" onClick={stageAll} />
-            <ToolBtn icon={I.unstage} label="Unstage" />
+            <ToolBtn icon={I.stage} label="Stage" onClick={() => void handleStageSelected()} disabled={!repository || selectedPaths.length === 0} />
+            <ToolBtn icon={I.stageAll} label="Stage All" onClick={() => void stageAllChanges()} disabled={!repository || unstaged.length === 0} />
+            <ToolBtn icon={I.unstage} label="Unstage" onClick={() => void handleUnstageSelected()} disabled={!repository || selectedPaths.length === 0} />
             <ToolDivider />
-            <ToolBtn icon={I.history} label="History" />
-            <ToolBtn icon={I.gitBranch} label="Branch" />
-            <ToolBtn icon={I.graph} label="Graph" />
-            <ToolBtn icon={I.merge} label="Merge" />
-            <ToolBtn icon={I.conflicts} label="Conflicts" />
+            <ToolBtn icon={I.history} label="History" onClick={() => void openPanel("history")} disabled={!repository} />
+            <ToolBtn icon={I.gitBranch} label="Branch" onClick={() => void openPanel("branches")} disabled={!repository} />
+            <ToolBtn icon={I.graph} label="Graph" onClick={() => void openPanel("graph")} disabled={!repository} />
+            <ToolBtn icon={I.merge} label="Merge" onClick={() => void handleMerge()} disabled={!repository} />
+            <ToolBtn icon={I.conflicts} label="Conflicts" onClick={() => void openPanel("conflicts")} disabled={!repository} />
             <div style={{ marginLeft: "auto" }}>
               <ToolBtn icon={I.commit} label="Commit"
                 accent={staged.length > 0 && commitMsg.trim().length > 0}
-                onClick={handleCommit}
+                onClick={() => void handleCommit()}
+                disabled={!repository}
               />
             </div>
           </div>
 
+          {/* Overlay panels */}
+          {activePanel === "branches" && (
+            <Panel title="Branches" onClose={() => setActivePanel(null)}>
+              <div style={{ padding: "0 14px 8px" }}>
+                <button onClick={() => void handleCreateBranch()} style={{ width: "100%", padding: "6px 10px", fontSize: 12, fontFamily: "var(--font-mono)", background: "var(--accent)", color: "var(--accent-fg)", border: "none", borderRadius: 6, cursor: "pointer" }}>
+                  + New branch
+                </button>
+              </div>
+              {branches.map(branch => (
+                <PanelRow key={branch.name} onClick={branch.current ? undefined : () => void handleSwitchBranch(branch.name)}>
+                  <span style={{ color: branch.current ? "var(--accent)" : "var(--text-faint)" }}>{I.gitBranch}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: branch.current ? 600 : 400 }}>{branch.name}</span>
+                  {branch.current && <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--accent)" }}>current</span>}
+                </PanelRow>
+              ))}
+            </Panel>
+          )}
+
+          {activePanel === "history" && (
+            <Panel title="History" onClose={() => setActivePanel(null)} width={400}>
+              {historyCommits.length === 0 && <PanelRow>No commits yet.</PanelRow>}
+              {historyCommits.map(commit => (
+                <PanelRow key={commit.hash}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2, width: "100%" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{commit.subject}</span>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-faint)", flexShrink: 0 }}>{commit.shortHash}</span>
+                    </div>
+                    <span style={{ fontSize: 10.5, color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>
+                      {commit.author} · {api.formatRelativeTime(commit.timestamp)}
+                    </span>
+                  </div>
+                </PanelRow>
+              ))}
+            </Panel>
+          )}
+
+          {activePanel === "graph" && (
+            <Panel title="Graph (all branches)" onClose={() => setActivePanel(null)} width={420}>
+              {graphCommits.length === 0 && <PanelRow>No commits yet.</PanelRow>}
+              {graphCommits.map((commit, idx) => (
+                <PanelRow key={commit.hash}>
+                  <span style={{ color: "var(--text-faint)", fontFamily: "var(--font-mono)", fontSize: 10 }}>{"●".padStart(Math.min(idx % 4, 3) + 1, "  ")}</span>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 10.5, color: "var(--text-faint)" }}>{commit.shortHash}</span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{commit.subject}</span>
+                </PanelRow>
+              ))}
+            </Panel>
+          )}
+
+          {activePanel === "conflicts" && (
+            <Panel title="Merge Conflicts" onClose={() => setActivePanel(null)} width={420}>
+              {!conflictState?.inProgress && <PanelRow>No merge in progress.</PanelRow>}
+              {conflictState?.inProgress && conflictState.conflicts.length === 0 && (
+                <PanelRow>All conflicts resolved — ready to commit the merge.</PanelRow>
+              )}
+              {conflictState?.conflicts.map(path => (
+                <div key={path} style={{ padding: "8px 14px", borderBottom: "1px solid var(--border-subtle)" }}>
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{path}</div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button onClick={() => void handleConflictAction("use-current", path)} style={smallButtonStyle}>Use Current</button>
+                    <button onClick={() => void handleConflictAction("use-incoming", path)} style={smallButtonStyle}>Use Incoming</button>
+                    <button onClick={() => void handleConflictAction("mark-resolved", path)} style={{ ...smallButtonStyle, borderColor: "var(--accent)", color: "var(--accent)" }}>Mark Resolved</button>
+                  </div>
+                </div>
+              ))}
+            </Panel>
+          )}
+
           {/* File Area */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
             {view === "list"
-              ? <ListView files={MOCK_FILES} selectedFiles={selectedFiles} toggleSelect={toggleSelect} />
-              : <GridView files={MOCK_FILES} selectedFiles={selectedFiles} toggleSelect={toggleSelect} />
+              ? <ListView files={displayedFiles} selectedFiles={selectedFiles} toggleSelect={toggleSelect} onDoubleClick={handleFileDoubleClick} />
+              : <GridView files={displayedFiles} selectedFiles={selectedFiles} toggleSelect={toggleSelect} onDoubleClick={handleFileDoubleClick} />
             }
           </div>
 
@@ -623,8 +1074,9 @@ export default function App() {
           {gitPanelOpen && (
             <GitPanel staged={staged} unstaged={unstaged}
               commitMsg={commitMsg} setCommitMsg={setCommitMsg}
-              onCommit={handleCommit} onToggleStage={toggleStage}
-              onStageAll={stageAll} commitDone={commitDone}
+              onCommit={() => void handleCommit()} onToggleStage={path => void toggleStage(path)}
+              onStageAll={() => void stageAllChanges()} commitDone={commitDone}
+              branchName={repository?.branch ?? "no repo"}
             />
           )}
         </div>
@@ -632,6 +1084,11 @@ export default function App() {
     </div>
   );
 }
+
+const smallButtonStyle: React.CSSProperties = {
+  fontSize: 10.5, fontFamily: "var(--font-mono)", padding: "4px 8px", borderRadius: 5,
+  border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer",
+};
 
 // ─── Sidebar helpers ──────────────────────────────────────────────────────────
 
@@ -667,8 +1124,9 @@ function SidebarBtn({ icon, label, active, onClick }: { icon: React.ReactNode; l
 
 // ─── List View ─────────────────────────────────────────────────────────────────
 
-function ListView({ files, selectedFiles, toggleSelect }: {
+function ListView({ files, selectedFiles, toggleSelect, onDoubleClick }: {
   files: FileItem[]; selectedFiles: Set<string>; toggleSelect: (id: string, e: React.MouseEvent) => void;
+  onDoubleClick: (item: FileItem) => void;
 }) {
   return (
     <div style={{ flex: 1, overflowY: "auto" }}>
@@ -683,10 +1141,13 @@ function ListView({ files, selectedFiles, toggleSelect }: {
           </span>
         ))}
       </div>
+      {files.length === 0 && (
+        <div style={{ padding: "24px 16px", fontSize: 12, color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>This folder is empty.</div>
+      )}
       {files.map((f, idx) => {
         const selected = selectedFiles.has(f.id);
         return (
-          <div key={f.id} className="row-in" onClick={e => toggleSelect(f.id, e)}
+          <div key={f.id} className="row-in" onClick={e => toggleSelect(f.id, e)} onDoubleClick={() => onDoubleClick(f)}
             style={{
               display: "grid", gridTemplateColumns: "32px 1fr 80px 110px 52px",
               padding: "5px 16px", alignItems: "center", cursor: "pointer",
@@ -700,8 +1161,8 @@ function ListView({ files, selectedFiles, toggleSelect }: {
           >
             <span>{f.type === "folder" ? <FolderIcon color={selected ? "var(--accent)" : "var(--text-faint)"} /> : <FileIcon ext={f.ext} />}</span>
             <span style={{ fontSize: 13, fontWeight: f.type === "folder" ? 500 : 400, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-faint)" }}>{f.size ?? "—"}</span>
-            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-faint)" }}>{f.modified}</span>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-faint)" }}>{f.type === "file" ? api.formatBytes(f.size) : "—"}</span>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-faint)" }}>{api.formatRelativeTime(f.modified)}</span>
             <span>{f.gitStatus && f.gitStatus !== "clean" && <GitDot status={f.gitStatus} />}</span>
           </div>
         );
@@ -712,8 +1173,9 @@ function ListView({ files, selectedFiles, toggleSelect }: {
 
 // ─── Grid View ─────────────────────────────────────────────────────────────────
 
-function GridView({ files, selectedFiles, toggleSelect }: {
+function GridView({ files, selectedFiles, toggleSelect, onDoubleClick }: {
   files: FileItem[]; selectedFiles: Set<string>; toggleSelect: (id: string, e: React.MouseEvent) => void;
+  onDoubleClick: (item: FileItem) => void;
 }) {
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
@@ -721,7 +1183,7 @@ function GridView({ files, selectedFiles, toggleSelect }: {
         {files.map((f, idx) => {
           const selected = selectedFiles.has(f.id);
           return (
-            <div key={f.id} className="row-in" onClick={e => toggleSelect(f.id, e)}
+            <div key={f.id} className="row-in" onClick={e => toggleSelect(f.id, e)} onDoubleClick={() => onDoubleClick(f)}
               style={{
                 display: "flex", flexDirection: "column", alignItems: "center", gap: 8,
                 padding: "14px 10px 10px", borderRadius: 10,
@@ -750,10 +1212,10 @@ function GridView({ files, selectedFiles, toggleSelect }: {
 
 // ─── Git Panel ─────────────────────────────────────────────────────────────────
 
-function GitPanel({ staged, unstaged, commitMsg, setCommitMsg, onCommit, onToggleStage, onStageAll, commitDone }: {
+function GitPanel({ staged, unstaged, commitMsg, setCommitMsg, onCommit, onToggleStage, onStageAll, commitDone, branchName }: {
   staged: GitChange[]; unstaged: GitChange[]; commitMsg: string;
   setCommitMsg: (s: string) => void; onCommit: () => void;
-  onToggleStage: (path: string) => void; onStageAll: () => void; commitDone: boolean;
+  onToggleStage: (path: string) => void; onStageAll: () => void; commitDone: boolean; branchName: string;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -828,7 +1290,7 @@ function GitPanel({ staged, unstaged, commitMsg, setCommitMsg, onCommit, onToggl
           }}
         />
         <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-faint)" }}>
-          {staged.length} file{staged.length !== 1 ? "s" : ""} staged · main
+          {staged.length} file{staged.length !== 1 ? "s" : ""} staged · {branchName}
         </div>
         <button onClick={onCommit} disabled={!commitMsg.trim() || staged.length === 0}
           style={{
@@ -841,7 +1303,7 @@ function GitPanel({ staged, unstaged, commitMsg, setCommitMsg, onCommit, onToggl
             transition: "background 0.2s, color 0.2s", letterSpacing: "-0.01em",
           }}
         >
-          {commitDone ? <>{I.check} Committed</> : <>{I.commit} Commit to main</>}
+          {commitDone ? <>{I.check} Committed</> : <>{I.commit} Commit to {branchName}</>}
         </button>
       </div>
     </div>
